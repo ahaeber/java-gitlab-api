@@ -30,22 +30,28 @@ public class GitlabAPI {
     private final String hostUrl;
 
     private final String apiToken;
+    private final TokenType tokenType;
     private boolean ignoreCertificateErrors = false;
 
-    private GitlabAPI(String hostUrl, String apiToken) {
+    private GitlabAPI(String hostUrl, String apiToken, TokenType tokenType) {
         this.hostUrl = hostUrl.endsWith("/") ? hostUrl.replaceAll("/$", "") : hostUrl;
         this.apiToken = apiToken;
+        this.tokenType = tokenType;
     }
 
     public static GitlabSession connect(String hostUrl, String username, String password) throws IOException {
         String tailUrl = GitlabSession.URL;
-        GitlabAPI api = connect(hostUrl, null);
+        GitlabAPI api = connect(hostUrl, null, (TokenType) null);
         return api.dispatch().with("login", username).with("password", password)
                 .to(tailUrl, GitlabSession.class);
     }
 
     public static GitlabAPI connect(String hostUrl, String apiToken) {
-        return new GitlabAPI(hostUrl, apiToken);
+        return new GitlabAPI(hostUrl, apiToken, TokenType.PRIVATE_TOKEN);
+    }
+
+    public static GitlabAPI connect(String hostUrl, String apiToken, TokenType tokenType) {
+        return new GitlabAPI(hostUrl, apiToken, tokenType);
     }
 
     public GitlabAPI ignoreCertificateErrors(boolean ignoreCertificateErrors) {
@@ -67,7 +73,7 @@ public class GitlabAPI {
 
     public URL getAPIUrl(String tailAPIUrl) throws IOException {
         if (apiToken != null) {
-            tailAPIUrl = tailAPIUrl + (tailAPIUrl.indexOf('?') > 0 ? '&' : '?') + "private_token=" + apiToken;
+            tailAPIUrl = tailAPIUrl + (tailAPIUrl.indexOf('?') > 0 ? '&' : '?') + tokenType.getTokenParamName() + "=" + apiToken;
         }
 
         if (!tailAPIUrl.startsWith("/")) {
@@ -177,7 +183,6 @@ public class GitlabAPI {
      * @param bio                  Bio
      * @param isAdmin              Is Admin
      * @param can_create_group     Can Create Group
-     * @param skip_confirmation    Skip Confirmation
      * @return The Updated User
      * @throws IOException on gitlab api call error
      */
@@ -278,6 +283,18 @@ public class GitlabAPI {
     public List<GitlabSSHKey> getSSHKeys(Integer targetUserId) throws IOException {
         String tailUrl = GitlabUser.USERS_URL + "/" + targetUserId + GitlabSSHKey.KEYS_URL;
         return Arrays.asList(retrieve().to(tailUrl, GitlabSSHKey[].class));
+    }
+
+    /**
+     * Get key with user information by ID of an SSH key.
+     *
+     * @param keyId The ID of an SSH key
+     * @return The SSH key with user information
+     * @throws IOException on gitlab api call error
+     */
+    public GitlabSSHKey getSSHKey(Integer keyId) throws IOException {
+        String tailUrl = GitlabSSHKey.KEYS_URL + "/" + keyId;
+        return retrieve().to(tailUrl, GitlabSSHKey.class);
     }
 
     /**
@@ -691,6 +708,63 @@ public class GitlabAPI {
         return Arrays.asList(diffs);
     }
 
+    /**
+     * Get raw file content
+     *
+     * @param project The Project
+     * @param sha   The commit or branch name
+     * @param filepath   The path of the file
+     * @throws IOException on gitlab api call error
+     */
+    public byte[] getRawFileContent(GitlabProject project, String sha, String filepath) throws IOException {
+        Query query = new Query()
+                .append("filepath", filepath);
+
+        String tailUrl = GitlabProject.URL + "/" + project.getId() + "/repository/blobs/" + sha + query.toString();
+        return retrieve().to(tailUrl, byte[].class);
+    }
+
+    /**
+     * Get the raw file contents for a blob by blob SHA.
+     *
+     * @param project The Project
+     * @param sha   The commit or branch name
+     * @throws IOException on gitlab api call error
+     */
+    public byte[] getRawBlobContent(GitlabProject project, String sha) throws IOException {
+        String tailUrl = GitlabProject.URL + "/" + project.getId() + "/repository/raw_blobs/" + sha;
+        return retrieve().to(tailUrl, byte[].class);
+    }
+
+    /**
+     * Get an archive of the repository
+     *
+     * @param project The Project
+     * @throws IOException on gitlab api call error
+     */
+    public byte[] getFileArchive(GitlabProject project) throws IOException {
+        String tailUrl = GitlabProject.URL + "/" + project.getId() + "/repository/archive";
+        return retrieve().to(tailUrl, byte[].class);
+    }
+
+    /**
+     * Get an archive of the repository
+     *
+     * @param project The Project
+     * @param path The path inside the repository. Used to get content of subdirectories (optional)
+     * @param ref_name The name of a repository branch or tag or if not given the default branch (optional)
+     * @throws IOException on gitlab api call error
+     */
+    public List<GitlabRepositoryTree> getRepositoryTree(GitlabProject project, String path, String ref_name) throws IOException {
+        Query query = new Query()
+                .appendIf("path", path)
+                .appendIf("ref_name", ref_name);
+
+        String tailUrl = GitlabProject.URL + "/" + project.getId() + "/repository" + GitlabRepositoryTree.URL + query.toString();
+        GitlabRepositoryTree[] tree = retrieve().to(tailUrl, GitlabRepositoryTree[].class);
+        return Arrays.asList(tree);
+	}
+
     public GitlabNote createNote(GitlabMergeRequest mergeRequest, String body) throws IOException {
         String tailUrl = GitlabProject.URL + "/" + mergeRequest.getProjectId() +
                 GitlabMergeRequest.URL + "/" + mergeRequest.getId() + GitlabNote.URL;
@@ -995,6 +1069,48 @@ public class GitlabAPI {
     public GitlabSession getCurrentSession() throws IOException {
         String tailUrl = "/user";
         return retrieve().to(tailUrl, GitlabSession.class);
+    }
+
+    /**
+     * Get list of system hooks
+     *
+     * @return The system hooks list
+     * @throws IOException on gitlab api call error
+     */
+    public List<GitlabSystemHook> getSystemHooks() throws IOException {
+        String tailUrl = GitlabSystemHook.URL;
+        return Arrays.asList(retrieve().to(tailUrl, GitlabSystemHook[].class));
+    }
+
+    /**
+     * Add new system hook hook
+     *
+     * @param url System hook url
+     * @throws IOException on gitlab api call error
+     */
+    public GitlabSystemHook addSystemHook(String url) throws IOException {
+        String tailUrl = GitlabSystemHook.URL;
+        return dispatch().with("url", url).to(tailUrl, GitlabSystemHook.class);
+    }
+
+    /**
+     * Test system hook
+     *
+     * @throws IOException on gitlab api call error
+     */
+    public void testSystemHook(Integer hookId) throws IOException {
+        String tailUrl = GitlabSystemHook.URL + "/" + hookId;
+        retrieve().to(tailUrl, Void.class);
+    }
+
+    /**
+     * Delete system hook
+     *
+     * @throws IOException on gitlab api call error
+     */
+    public GitlabSystemHook deleteSystemHook(Integer hookId) throws IOException {
+        String tailUrl = GitlabSystemHook.URL + "/" + hookId;
+        return retrieve().method("DELETE").to(tailUrl, GitlabSystemHook.class);
     }
 
     private String sanitizeProjectId(Serializable projectId) {
